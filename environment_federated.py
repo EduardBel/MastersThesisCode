@@ -67,8 +67,24 @@ class Peer():
                 attacked = 1
                 print('Label flipping attack launched by', self.peer_pseudonym, 'to flip class ', source_class,
                 ' to class ', target_class)
-        lr=self.local_lr
+        #lr=self.local_lr   #Don't know if we should use this only for usual label flipping or for both
 
+
+        #***********************************************************************************************
+        #Eduard's Code
+        if (attack_type == 'entropy_label_flipping') and (self.peer_type == 'attacker'):
+            if dataset_name != 'IMDB':
+                poisoned_data = label_filp(self.local_data, source_class, target_class) #change the functions name
+                train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
+            self.performed_attacks+=1
+            attacked = 1
+            print('Entropy-based Label flipping attack launched by', self.peer_pseudonym, 'to flip class ', source_class,
+            ' to class ', target_class)
+        #End of Eduard's Code
+        #***********************************************************************************************
+
+
+        lr=self.local_lr
         if dataset_name == 'IMDB':
             optimizer = optim.Adam(model.parameters(), lr=lr)
         else:
@@ -324,6 +340,7 @@ class FL:
                 copy.deepcopy(simulation_model),
                 attack_type = attack_type, malicious_behavior_rate = malicious_behavior_rate, 
                 source_class = source_class, target_class = target_class, dataset_name = self.dataset_name)
+                
                 local_weights.append(peer_update)
                 local_grads.append(peer_grad)
                 local_losses.append(peer_loss) 
