@@ -34,8 +34,8 @@ class Peer():
     def performed_attacks(self,val):
         type(self)._performed_attacks = val
 
-    def __init__(self, peer_id, peer_pseudonym, local_data, labels, criterion, 
-                device, local_epochs, local_bs, local_lr, 
+    def __init__(self, peer_id, peer_pseudonym, local_data, labels, criterion,
+                device, local_epochs, local_bs, local_lr,
                 local_momentum, peer_type = 'honest'):
 
         self.peer_id = peer_id
@@ -50,11 +50,11 @@ class Peer():
         self.local_momentum = local_momentum
         self.peer_type = peer_type
 #======================================= Start of training function ===========================================================#
-    def participant_update(self, global_epoch, model, attack_type = 'no_attack', malicious_behavior_rate = 0, 
+    def participant_update(self, global_epoch, model, attack_type = 'no_attack', malicious_behavior_rate = 0,
                             source_class = None, target_class = None, dataset_name = None) :
-        
+
         epochs = self.local_epochs
-        train_loader = DataLoader(self.local_data, self.local_bs, shuffle = True, drop_last=True)
+        # train_loader = DataLoader(self.local_data, self.local_bs, shuffle = False, drop_last=True) #Shuffle was true, not needed
         attacked = 0
         #Get the poisoned training data of the peer in case of label-flipping or backdoor attacks
         if (attack_type == 'label_flipping') and (self.peer_type == 'attacker'):
@@ -73,6 +73,68 @@ class Peer():
         #***********************************************************************************************
         #Eduard's Code
         if (attack_type == 'entropy_label_flipping') and (self.peer_type == 'attacker'):
+
+            #mind the shuffle
+            train_loader = DataLoader(self.local_data, self.local_bs, shuffle = False, drop_last=True) #Shuffle was true
+            model.eval()  # Set the model to evaluation mode
+            entropies = []  # To store entropies for each data sample
+            kept_indices=[] #to store the indices of the data samples with label==target_class
+
+            with torch.no_grad():
+                count=0
+                for batch_idx, (data, labels) in enumerate(train_loader):
+                    # Find the indices of data samples with label of the target class
+                    target_mask = labels == target_class
+                    #keep the positions of the data samples with label==target_class
+                    kept_indices_batch = (batch_idx * train_loader.batch_size + i for i in range(len(target_mask)) if target_mask[i])
+                    kept_indices.extend(kept_indices_batch)
+                    # Get the data samples with label target
+                    data_target_batch = data[target_mask]
+                    #get the amount of data in the batch
+                    count += data_target_batch.shape[0] #used to test if it was being well done
+                    # Send the data samples with label=target_class to the device
+                    data_target_batch = data_target_batch.to(self.device)
+                    # Obtain the predicted outputs for data samples with label 7
+                    output = model(data_target_batch)  # Get the model's output (predicted logits)
+                    # probabilities = F.softmax(output, dim=1)
+                    predictions_np=(output.cpu().numpy())
+                    entropies.extend(stats.entropy(predictions_np, axis=1)) #entropy is calculated on the rows
+
+                # print("count: ", count, "\n")
+                # print("entropies: ", entropies, "\n")
+                # print("len(entropies): ", len(entropies), "\n")
+                # print("len(kept_indices): ", len(kept_indices), "\n")
+                # print("kept_indices: ", kept_indices, "\n")
+
+                # Create a list of tuples to link indices with their corresponding entropy values
+                entropy_list = list(zip(kept_indices, entropies))
+                sorted_entropy_list = sorted(entropy_list, key=lambda x: x[1], reverse=True)    #sort it by entropy value
+                num_elements_to_keep = len(sorted_entropy_list) // 4   #number of elements that represents the 25% of the data that we can attack
+                top_25_percent = sorted_entropy_list[:num_elements_to_keep] #extract the top 25% of the data
+                sorted_entropy_list = sorted(top_25_percent, key=lambda x: x[0])  #sort by index to keep the order of the data
+                print("sorted_entropy_list: ", sorted_entropy_list, "\n")
+                #at this point we have the entropies we need
+
+                #repeat the loop
+                sorted_position = 0  # position of the sorted_entropy_list
+                for batch_idx, (data, labels) in enumerate(train_loader):
+                    # Check if the current batch contains the desired indices from 'sorted_entropy_list'
+                    while sorted_position < len(sorted_entropy_list):
+                        desired_index = sorted_entropy_list[sorted_position][0]
+                        if batch_idx * train_loader.batch_size <= desired_index < (batch_idx + 1) * train_loader.batch_size:
+                            # Process the data with the desired index here
+                            # ...
+                            print("desired_index: ", desired_index, "\n")
+                            # Move to the next index in 'sorted_entropy_list'
+                            sorted_position += 1
+                        else:
+                            # Break the loop if no more desired indices in this batch
+                            break
+                exit(0)
+
+
+
+
             if dataset_name != 'IMDB':
                 poisoned_data = label_filp(self.local_data, source_class, target_class) #change the functions name
                 train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
@@ -83,8 +145,9 @@ class Peer():
         #End of Eduard's Code
         #***********************************************************************************************
 
+        train_loader = DataLoader(self.local_data, self.local_bs, shuffle = True, drop_last=True) #Shuffle was true
 
-        lr=self.local_lr
+        lr=self.local_lr    #what is it??
         if dataset_name == 'IMDB':
             optimizer = optim.Adam(model.parameters(), lr=lr)
         else:
@@ -105,7 +168,7 @@ class Peer():
                 #     target = (target + 1)%10
                 output = model(data)
                 loss = self.criterion(output, target)
-                loss.backward()    
+                loss.backward()
                 epoch_loss.append(loss.item())
                 # get gradients
                 cur_time = time.time()
@@ -114,14 +177,14 @@ class Peer():
                         if epoch == 0 and batch_idx == 0:
                             peer_grad.append(params.grad.clone())
                         else:
-                            peer_grad[i]+= params.grad.clone()   
-                t+= time.time() - cur_time    
+                            peer_grad[i]+= params.grad.clone()
+                t+= time.time() - cur_time
                 optimizer.step()
                 model.zero_grad()
                 optimizer.zero_grad()
-               
+
             # print('Train epoch: {} \tLoss: {:.6f}'.format((epochs+1), np.mean(epoch_loss)))
-    
+
         if (attack_type == 'gaussian' and self.peer_type == 'attacker'):
             update, flag =  gaussian_attack(model.state_dict(), self.peer_pseudonym,
             malicious_behavior_rate = malicious_behavior_rate, device = self.device)
@@ -140,7 +203,7 @@ class Peer():
 
 
 class FL:
-    def __init__(self, dataset_name, model_name, dd_type, num_peers, frac_peers, 
+    def __init__(self, dataset_name, model_name, dd_type, num_peers, frac_peers,
     seed, test_batch_size, criterion, global_rounds, local_epochs, local_bs, local_lr,
     local_momentum, labels_dict, device, attackers_ratio = 0,
     class_per_peer=2, samples_per_class= 250, rate_unbalance = 1, alpha = 1,source_class = None):
@@ -172,26 +235,26 @@ class FL:
         self.embedding_dim = 100
         self.peers = []
         self.trainset, self.testset = None, None
-        
+
         # Fix the random state of the environment
         random.seed(self.seed)
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
         torch.cuda.manual_seed_all(self.seed)
         os.environ['PYTHONHASHSEED'] = str(self.seed)
-       
+
         #Loading of data
-        self.trainset, self.testset, user_groups_train, tokenizer = distribute_dataset(self.dataset_name, self.num_peers, self.num_classes, 
+        self.trainset, self.testset, user_groups_train, tokenizer = distribute_dataset(self.dataset_name, self.num_peers, self.num_classes,
         self.dd_type, self.class_per_peer, self.samples_per_class, self.alpha)
 
         self.test_loader = DataLoader(self.testset, batch_size = self.test_batch_size,
             shuffle = False, num_workers = 1)
-    
+
         #Creating model
-        self.global_model = setup_model(model_architecture = self.model_name, num_classes = self.num_classes, 
+        self.global_model = setup_model(model_architecture = self.model_name, num_classes = self.num_classes,
         tokenizer = tokenizer, embedding_dim = self.embedding_dim)
         self.global_model = self.global_model.to(self.device)
-        
+
         # Dividing the training set among peers
         self.local_data = []
         self.have_source_class = []
@@ -216,20 +279,20 @@ class FL:
             m_ = int(self.attackers_ratio * self.num_peers)
             self.num_attackers = copy.deepcopy(m_)
 
-        peers = list(np.arange(self.num_peers))  
+        peers = list(np.arange(self.num_peers))
         random.shuffle(peers)
         for i in peers:
             if m_ > 0 and contains_class(self.local_data[i], self.source_class):
-                self.peers.append(Peer(i, self.peers_pseudonyms[i], 
+                self.peers.append(Peer(i, self.peers_pseudonyms[i],
                 self.local_data[i], self.labels[i],
-                self.criterion, self.device, self.local_epochs, self.local_bs, self.local_lr, 
+                self.criterion, self.device, self.local_epochs, self.local_bs, self.local_lr,
                 self.local_momentum, peer_type = 'attacker'))
                 m_-= 1
             else:
-                self.peers.append(Peer(i, self.peers_pseudonyms[i], 
+                self.peers.append(Peer(i, self.peers_pseudonyms[i],
                 self.local_data[i], self.labels[i],
-                self.criterion, self.device, self.local_epochs, self.local_bs, self.local_lr, 
-                self.local_momentum))  
+                self.criterion, self.device, self.local_epochs, self.local_bs, self.local_lr,
+                self.local_momentum))
 
         del self.local_data
 
@@ -257,7 +320,7 @@ class FL:
            100*correct / n))
         return  100.0*(float(correct) / n), test_loss
     #======================================= End of testning function =============================================================#
-#Test label prediction function    
+#Test label prediction function
     def test_label_predictions(self, model, device, test_loader, dataset_name = None):
         model.eval()
         actuals = []
@@ -270,11 +333,11 @@ class FL:
                     prediction = output > 0.5
                 else:
                     prediction = output.argmax(dim=1, keepdim=True)
-                
+
                 actuals.extend(target.view_as(prediction))
                 predictions.extend(prediction)
         return [i.item() for i in actuals], [i.item() for i in predictions]
-    
+
     #choose random set of peers
     def choose_peers(self):
         #pick m random peers from the available list of peers
@@ -286,7 +349,7 @@ class FL:
         #     print(i+1, ': ', self.peers[p].peer_pseudonym, ' is ', self.peers[p].peer_type)
         return selected_peers
 
-        
+
     def run_experiment(self, attack_type = 'no_attack', malicious_behavior_rate = 0,
         source_class = None, target_class = None, rule = 'fedavg', resume = False):
         simulation_model = copy.deepcopy(self.global_model)
@@ -316,37 +379,37 @@ class FL:
             test_losses = checkpoint['test_losses']
             global_accuracies = checkpoint['global_accuracies']
             source_class_accuracies = checkpoint['source_class_accuracies']
-            
+
             print('>>checkpoint loaded!')
         print("\n====>Global model training started...\n")
         for epoch in tqdm_notebook(range(start_round, self.global_rounds)):
             gc.collect()
             torch.cuda.empty_cache()
-            
+
             # if epoch % 20 == 0:
-            #     clear_output()  
+            #     clear_output()
             print(f'\n | Global training round : {epoch+1}/{self.global_rounds} |\n')
             selected_peers = self.choose_peers()
-            local_weights, local_grads, local_models, local_losses, performed_attacks = [], [], [], [], []  
+            local_weights, local_grads, local_models, local_losses, performed_attacks = [], [], [], [], []
             peers_types = []
-            i = 1        
+            i = 1
             attacks = 0
             Peer._performed_attacks = 0
             for peer in selected_peers:
                 peers_types.append(mapping[self.peers[peer].peer_type])
                 # print(i)
                 # print('\n{}: {} Starts training in global round:{} |'.format(i, (self.peers_pseudonyms[peer]), (epoch + 1)))
-                peer_update, peer_grad, peer_local_model, peer_loss, attacked, t = self.peers[peer].participant_update(epoch, 
+                peer_update, peer_grad, peer_local_model, peer_loss, attacked, t = self.peers[peer].participant_update(epoch,
                 copy.deepcopy(simulation_model),
-                attack_type = attack_type, malicious_behavior_rate = malicious_behavior_rate, 
+                attack_type = attack_type, malicious_behavior_rate = malicious_behavior_rate,
                 source_class = source_class, target_class = target_class, dataset_name = self.dataset_name)
-                
+
                 local_weights.append(peer_update)
                 local_grads.append(peer_grad)
-                local_losses.append(peer_loss) 
-                local_models.append(peer_local_model) 
+                local_losses.append(peer_loss)
+                local_models.append(peer_local_model)
                 attacks+= attacked
-                # print('{} ends training in global round:{} |\n'.format((self.peers_pseudonyms[peer]), (epoch + 1))) 
+                # print('{} ends training in global round:{} |\n'.format((self.peers_pseudonyms[peer]), (epoch + 1)))
                 i+= 1
             # loss_avg = sum(local_losses) / len(local_losses)
             # print('Average of peers\' local losses: {:.6f}'.format(loss_avg))
@@ -385,15 +448,15 @@ class FL:
 
             elif rule == 'Tolpegin':
                 cur_time = time.time()
-                scores = tolpegin.score(copy.deepcopy(self.global_model), 
-                                            copy.deepcopy(local_models), 
+                scores = tolpegin.score(copy.deepcopy(self.global_model),
+                                            copy.deepcopy(local_models),
                                             peers_types = peers_types,
                                             selected_peers = selected_peers)
                 global_weights = average_weights(local_weights, scores)
                 t = time.time() - cur_time
                 print('Aggregation took', np.round(t, 4))
                 cpu_runtimes.append(t)
-            
+
             elif rule == 'FLAME':
                 cur_time = time.time()
                 global_weights = FLAME(copy.deepcopy(self.global_model).cpu(), copy.deepcopy(local_models), noise_scalar)
@@ -407,35 +470,35 @@ class FL:
                 global_weights = lfd.aggregate(copy.deepcopy(simulation_model), copy.deepcopy(local_models), peers_types)
                 cpu_runtimes.append(time.time() - cur_time)
 
-            
+
             elif rule == 'fedavg':
                 cur_time = time.time()
                 global_weights = average_weights(local_weights, [1 for i in range(len(local_weights))])
                 cpu_runtimes.append(time.time() - cur_time)
-            
+
             else:
                 global_weights = average_weights(local_weights, [1 for i in range(len(local_weights))])
                 ##############################################################################################
             #Plot honest vs attackers
             # if attack_type == 'label_flipping' and epoch >= 10 and epoch < 20:
-            #     plot_updates_components(local_models, peers_types, epoch=epoch+1)   
-            #     plot_layer_components(local_models, peers_types, epoch=epoch+1, layer = 'linear_weight')  
+            #     plot_updates_components(local_models, peers_types, epoch=epoch+1)
+            #     plot_layer_components(local_models, peers_types, epoch=epoch+1, layer = 'linear_weight')
             #     plot_source_target(local_models, peers_types, epoch=epoch+1, classes= [source_class, target_class])
             # update global weights
             g_model = copy.deepcopy(simulation_model)
-            simulation_model.load_state_dict(global_weights)           
+            simulation_model.load_state_dict(global_weights)
             if epoch >= self.global_rounds-10:
-                last10_updates.append(global_weights) 
+                last10_updates.append(global_weights)
 
             current_accuracy, test_loss = self.test(simulation_model, self.device, self.test_loader, dataset_name=self.dataset_name)
-            
+
             if np.isnan(test_loss):
                 simulation_model = copy.deepcopy(g_model)
                 noise_scalar = noise_scalar*0.5
-            
+
             global_accuracies.append(np.round(current_accuracy, 2))
             test_losses.append(np.round(test_loss, 4))
-            performed_attacks.append(attacks) 
+            performed_attacks.append(attacks)
             state = {
                 'epoch': epoch,
                 'state_dict': simulation_model.state_dict(),
@@ -465,9 +528,9 @@ class FL:
 
             if epoch == self.global_rounds-1:
                 print('Last 10 updates results')
-                global_weights = average_weights(last10_updates, 
+                global_weights = average_weights(last10_updates,
                 np.ones([len(last10_updates)]))
-                simulation_model.load_state_dict(global_weights) 
+                simulation_model.load_state_dict(global_weights)
                 current_accuracy, test_loss = self.test(simulation_model, self.device, self.test_loader, dataset_name=self.dataset_name)
                 global_accuracies.append(np.round(current_accuracy, 2))
                 test_losses.append(np.round(test_loss, 4))
@@ -493,7 +556,7 @@ class FL:
                 'avg_cpu_runtime':np.mean(cpu_runtimes)
                 }
         savepath = './results/'+ self.dataset_name + '_' + self.model_name + '_' + self.dd_type + '_'+ rule + '_'+ str(self.attackers_ratio) + '_' + str(self.local_epochs) + '.t7'
-        torch.save(state,savepath)            
+        torch.save(state,savepath)
         print('Global accuracies: ', global_accuracies)
         print('Class {} accuracies: '.format(source_class), source_class_accuracies)
         print('Test loss:', test_losses)
