@@ -54,7 +54,7 @@ class Peer():
                             source_class = None, target_class = None, dataset_name = None) :
 
         epochs = self.local_epochs
-        # train_loader = DataLoader(self.local_data, self.local_bs, shuffle = False, drop_last=True) #Shuffle was true, not needed
+        train_loader = DataLoader(self.local_data, self.local_bs, shuffle = True, drop_last=True)   # in case there are no attackers
         attacked = 0
         #Get the poisoned training data of the peer in case of label-flipping or backdoor attacks
         if (attack_type == 'label_flipping') and (self.peer_type == 'attacker'):
@@ -74,7 +74,6 @@ class Peer():
         #Eduard's Code
         if (attack_type == 'entropy_label_flipping') and (self.peer_type == 'attacker'):
 
-            #mind the shuffle
             train_loader = DataLoader(self.local_data, self.local_bs, shuffle = False, drop_last=True) #Shuffle was true
             model.eval()  # Set the model to evaluation mode
             entropies = []  # To store entropies for each data sample
@@ -83,9 +82,9 @@ class Peer():
             with torch.no_grad():
                 count=0
                 for batch_idx, (data, labels) in enumerate(train_loader):
-                    # Find the indices of data samples with label of the target class
-                    target_mask = labels == target_class
-                    #keep the positions of the data samples with label==target_class
+                    # Find the indices of data samples with label of the source class
+                    target_mask = labels == source_class
+                    #keep the positions of the data samples with label==source_class
                     kept_indices_batch = (batch_idx * train_loader.batch_size + i for i in range(len(target_mask)) if target_mask[i])
                     kept_indices.extend(kept_indices_batch)
                     # Get the data samples with label target
@@ -112,24 +111,22 @@ class Peer():
                 num_elements_to_keep = len(sorted_entropy_list) // 4   #number of elements that represents the 25% of the data that we can attack
                 top_25_percent = sorted_entropy_list[:num_elements_to_keep] #extract the top 25% of the data
                 sorted_entropy_list = sorted(top_25_percent, key=lambda x: x[0])  #sort by index to keep the order of the data
-                print("sorted_entropy_list: ", sorted_entropy_list, "\n")
+                print("len(sorted_entropy_list): ", len(sorted_entropy_list), "\n")
                 #at this point we have the entropies we need
 
-                #repeat the loop
-                sorted_position = 0  # position of the sorted_entropy_list
-                for batch_idx, (data, labels) in enumerate(train_loader):
-                    # Check if the current batch contains the desired indices from 'sorted_entropy_list'
-                    while sorted_position < len(sorted_entropy_list):
-                        desired_index = sorted_entropy_list[sorted_position][0]
-                        if batch_idx * train_loader.batch_size <= desired_index < (batch_idx + 1) * train_loader.batch_size:
-                            # Process the data with the desired index here
-                            # ...
-                            print("desired_index: ", desired_index, "\n")
-                            # Move to the next index in 'sorted_entropy_list'
-                            sorted_position += 1
-                        else:
-                            # Break the loop if no more desired indices in this batch
-                            break
+
+                poisoned_data = []
+                for i, (data, label) in enumerate(train_loader.dataset):
+                    if i in [index for index, _ in sorted_entropy_list]:
+                        # print("index: ", i, " label: ", label, " before\n")
+                        poisoned_data.append((data, target_class))  # Change the label to 'target_class'
+                        # print("index: ", i, " label: ", target_class, " after\n")
+                    else:
+                        poisoned_data.append((data, label))  # Keep the original label
+
+                # Create a new DataLoader with the updated dataset
+                train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
+
                 exit(0)
 
 
@@ -145,7 +142,7 @@ class Peer():
         #End of Eduard's Code
         #***********************************************************************************************
 
-        train_loader = DataLoader(self.local_data, self.local_bs, shuffle = True, drop_last=True) #Shuffle was true
+        # train_loader = DataLoader(self.local_data, self.local_bs, shuffle = True, drop_last=True) #Shuffle was true comment bc i poison it on entropy
 
         lr=self.local_lr    #what is it??
         if dataset_name == 'IMDB':
