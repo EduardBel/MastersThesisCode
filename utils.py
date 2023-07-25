@@ -34,6 +34,15 @@ def label_filp(data, source_class, target_class):
     poisoned_data = PoisonedDataset(data, source_class, target_class)
     return poisoned_data
 
+def index_label_flip(dataset, sorted_list, target_class):
+        poisoned_data = []
+        for i, (data, label) in enumerate(dataset):
+            if i in [index for index, _ in sorted_list]:
+                poisoned_data.append((data, target_class))  # Change the label to target_class
+            else:
+                poisoned_data.append((data, label))  # Keep the original label
+        return poisoned_data
+
 def flatten_updates(updates):
     f = torch.nn.utils.parameters_to_vector
     updates_ = [f(update.parameters()).view(-1).cpu().data.numpy() for update in updates]

@@ -108,13 +108,7 @@ class Peer():
             # print("sorted_entropy_list: ", len(sorted_entropy_list), "\n")
             # At this point we have the entropies we need
 
-            poisoned_data = []
-            for i, (data, label) in enumerate(train_loader.dataset):
-                if i in [index for index, _ in sorted_entropy_list]:
-                    poisoned_data.append((data, target_class))  # Change the label to target_class
-                else:
-                    poisoned_data.append((data, label))  # Keep the original label
-
+            poisoned_data = index_label_flip(train_loader.dataset, sorted_entropy_list, target_class)
             # Create a new DataLoader with the updated dataset and with a shuffle
             train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
 
@@ -177,6 +171,16 @@ class Peer():
         model = model.cpu()
         return model.state_dict(), peer_grad , model, np.mean(epoch_loss), attacked, t
 #======================================= End of training function =============================================================#
+
+    def smart_label_flip(dataset, sorted_list, target_class):
+        poisoned_data = []
+        for i, (data, label) in enumerate(dataset):
+            if i in [index for index, _ in sorted_list]:
+                poisoned_data.append((data, target_class))  # Change the label to target_class
+            else:
+                poisoned_data.append((data, label))  # Keep the original label
+        return poisoned_data
+
 #========================================= End of Peer class ====================================================================
 
 
