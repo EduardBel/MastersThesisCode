@@ -34,6 +34,13 @@ def label_filp(data, source_class, target_class):
     poisoned_data = PoisonedDataset(data, source_class, target_class)
     return poisoned_data
 
+def scale_model(update, scale_factor):
+    for key in update.keys():
+        update[key] = (update[key].float() * scale_factor).long()
+
+
+    return update
+
 def index_label_flip(dataset, sorted_list, target_class):
         poisoned_data = []
         for i, (data, label) in enumerate(dataset):

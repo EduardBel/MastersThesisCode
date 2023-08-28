@@ -93,17 +93,17 @@ class Peer():
                     entropies.extend(stats.entropy(predictions_np, axis=1)) # Entropy is calculated by row
 
                 # print("entropies: ", entropies, "\n")
-                print("len(entropies): ", len(entropies), "\n")
-                print("len(kept_indices): ", len(kept_indices), "\n")
+                # print("len(entropies): ", len(entropies), "\n")
+                # print("len(kept_indices): ", len(kept_indices), "\n")
                 # print("kept_indices: ", kept_indices, "\n")
 
             # Create a list of tuples to link indices with their corresponding entropy values
             entropy_list = list(zip(kept_indices, entropies))
             sorted_entropy_list = sorted(entropy_list, key=lambda x: x[1], reverse=True)    # Sort it by entropy value
-            num_elements_to_keep = len(sorted_entropy_list) // 4   # Number of elements that represents the 25% of the data that we can attack
+            num_elements_to_keep = len(sorted_entropy_list) // 2   # Number of elements that represents the 50% of the data that we can attack
             top_25_percent = sorted_entropy_list[:num_elements_to_keep] # Extract the top 25% of the data
             sorted_entropy_list = sorted(top_25_percent, key=lambda x: x[0])  # Sort by index to keep the order of the data
-            print("len(sorted_entropy_list): ", len(sorted_entropy_list), "\n")
+            # print("len(sorted_entropy_list): ", len(sorted_entropy_list), "\n")
             # At this point we have the entropies we need
 
             # count_source_class = 0
@@ -134,6 +134,56 @@ class Peer():
             self.performed_attacks+=1
             attacked = 1
             print('Entropy-based Label flipping attack launched by', self.peer_pseudonym, 'to flip class ', source_class,
+            ' to class ', target_class, ', modifying ', num_elements_to_keep, ' data samples.')
+        
+        if (attack_type == 'stealthy_entropy_label_flipping') and (self.peer_type == 'attacker'):
+            train_loader = DataLoader(self.local_data, self.local_bs, shuffle = False, drop_last=True)
+            model.eval()  # Set the model to evaluation mode
+            entropies = []  # To store entropies for each data sample
+            kept_indices=[] #to store the indices of the data samples with label==target_class
+            if global_epoch > 50:
+                with torch.no_grad():
+                    for batch_idx, (data, labels) in enumerate(train_loader):
+                        # Find the indices of data samples with label of the source class
+                        source_mask = labels == source_class
+                        # Keep the positions of the data samples with label==source_class
+                        kept_indices_batch = (batch_idx * train_loader.batch_size + i for i in range(len(source_mask)) if source_mask[i])
+                        kept_indices.extend(kept_indices_batch)
+                        # Get the data samples with label target
+                        data_source_batch = data[source_mask]
+                        # Send the data samples with label=source_class to the device
+                        data_source_batch = data_source_batch.to(self.device)
+                        # Obtain the predicted outputs for data samples with label source_class
+                        output = model(data_source_batch)  # Get the model's output for the source class data samples
+                        predictions_np=(output.cpu().numpy())   # Convert the output to numpy
+                        entropies.extend(stats.entropy(predictions_np, axis=1)) # Entropy is calculated by row
+
+
+
+                # Create a list of tuples to link indices with their corresponding entropy values
+                entropy_list = list(zip(kept_indices, entropies))
+                sorted_entropy_list = sorted(entropy_list, key=lambda x: x[1], reverse=True)    # Sort it by entropy value
+
+                num_elements_to_keep=0
+                if global_epoch <= 100:
+                    num_elements_to_keep = len(sorted_entropy_list) //4    # 50% of the data that we can attack
+                
+
+                top_25_percent = sorted_entropy_list[:num_elements_to_keep] # Extract the top 25% of the data
+                sorted_entropy_list = sorted(top_25_percent, key=lambda x: x[0])  # Sort by index to keep the order of the data
+
+                poisoned_data = index_label_flip(train_loader.dataset, sorted_entropy_list, target_class)
+                # Create a new DataLoader with the updated dataset and with a shuffle
+                train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
+                
+            else:   #we flip all the data
+                poisoned_data = label_filp(self.local_data, source_class, target_class)
+                train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
+                num_elements_to_keep = len(poisoned_data)
+
+            self.performed_attacks+=1
+            attacked = 1
+            print('Stealthy Entropy-based Label flipping attack launched by', self.peer_pseudonym, 'to flip class ', source_class,
             ' to class ', target_class, ', modifying ', num_elements_to_keep, ' data samples.')
         
 
@@ -173,20 +223,28 @@ class Peer():
             # Create a list of tuples to link indices with their corresponding entropy values
             closeness_list = list(zip(kept_indices, closeness))
             sorted_closeness_list = sorted(closeness_list, key=lambda x: x[1])    # Sort it by entropy value
+
+            # threshold=0.6
+            # count=1
+            # actual=sorted_closeness_list[0][1]
+            # while actual<=threshold and count < len(sorted_closeness_list):
+            #     actual=sorted_closeness_list[count][1]
+            #     count+=1
             # print("sorted_closeness_list: ", sorted_closeness_list, "\n")
-            num_elements_to_keep = len(sorted_closeness_list) // 4   # Number of elements that represents the 25% of the data that we can attack
+            num_elements_to_keep = len(sorted_closeness_list) // 2   # Number of elements that represents the 25% of the data that we can attack
             top_25_percent = sorted_closeness_list[:num_elements_to_keep] # Extract the top 25% of the data
             sorted_closeness_list = sorted(top_25_percent, key=lambda x: x[0])  # Sort by index to keep the order of the data
-            # print("sorted_entropy_list: ", len(sorted_entropy_list), "\n")
+            # print("sorted_closeness_list: ", len(sorted_closeness_list), "\n")
             # At this point we have the entropies we need
+            # print("top_25_percent: ", top_25_percent, "\n")
 
-            count_source_class = 0
-            for data, labels in train_loader:
-                # Find the indices of data samples with the source_class label
-                for label in labels:
-                    if label == source_class:
-                        count_source_class += 1
-            print("source class labels before:", count_source_class)
+            # count_source_class = 0
+            # for data, labels in train_loader:
+            #     # Find the indices of data samples with the source_class label
+            #     for label in labels:
+            #         if label == source_class:
+            #             count_source_class += 1
+            # print("source class labels before:", count_source_class)
 
 
             poisoned_data = index_label_flip(train_loader.dataset, sorted_closeness_list, target_class)
@@ -194,19 +252,70 @@ class Peer():
             train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
 
 
-            count_source_class = 0
-            for data, labels in train_loader:
-                # Find the indices of data samples with the source_class label
-                for label in labels:
-                    if label == source_class:
-                        count_source_class += 1
-            print("source class labels before:", count_source_class)
+            # count_source_class = 0
+            # for data, labels in train_loader:
+            #     # Find the indices of data samples with the source_class label
+            #     for label in labels:
+            #         if label == source_class:
+            #             count_source_class += 1
+            # print("source class labels before:", count_source_class)
 
 
 
             self.performed_attacks+=1
             attacked = 1
             print('Closeness-based Label flipping attack launched by', self.peer_pseudonym, 'to flip class ', source_class,
+            ' to class ', target_class, ', modifying ', num_elements_to_keep, ' data samples.')
+        
+        if (attack_type == 'stealthy_closeness_label_flipping') and (self.peer_type == 'attacker'):
+            train_loader = DataLoader(self.local_data, self.local_bs, shuffle = False, drop_last=True)
+            model.eval()  # Set the model to evaluation mode
+            closeness = []  # To store entropies for each data sample
+            kept_indices=[] #to store the indices of the data samples with label==target_class
+            if global_epoch > 50:
+
+                with torch.no_grad():
+                    for batch_idx, (data, labels) in enumerate(train_loader):
+                        # Find the indices of data samples with label of the source class
+                        source_mask = labels == source_class
+                        # Keep the positions of the data samples with label==source_class
+                        kept_indices_batch = (batch_idx * train_loader.batch_size + i for i in range(len(source_mask)) if source_mask[i])
+                        kept_indices.extend(kept_indices_batch)
+                        # Get the data samples with label target
+                        data_source_batch = data[source_mask]
+                        # Send the data samples with label=source_class to the device
+                        data_source_batch = data_source_batch.to(self.device)
+                        # Obtain the predicted outputs for data samples with label source_class
+                        output = model(data_source_batch)  # Get the model's output for the source class data samples
+                        predictions_np=(output.cpu().numpy())   # Convert the output to numpy
+
+                        temp = []
+                        for i in range(len(predictions_np)):
+                            temp.append(abs(predictions_np[i][source_class] - predictions_np[i][target_class]))
+                        closeness.extend(temp) # Entropy is calculated by row
+
+
+                # Create a list of tuples to link indices with their corresponding entropy values
+                closeness_list = list(zip(kept_indices, closeness))
+                sorted_closeness_list = sorted(closeness_list, key=lambda x: x[1])    # Sort it by entropy value
+
+                num_elements_to_keep = len(sorted_closeness_list) // 2   # Number of elements that represents the 25% of the data that we can attack
+                top_25_percent = sorted_closeness_list[:num_elements_to_keep] # Extract the top 25% of the data
+                sorted_closeness_list = sorted(top_25_percent, key=lambda x: x[0])  # Sort by index to keep the order of the data
+
+
+                poisoned_data = index_label_flip(train_loader.dataset, sorted_closeness_list, target_class)
+                # Create a new DataLoader with the updated dataset and with a shuffle
+                train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
+
+            else:   #we flip all the data
+                poisoned_data = label_filp(self.local_data, source_class, target_class)
+                train_loader = DataLoader(poisoned_data, self.local_bs, shuffle = True, drop_last=True)
+                num_elements_to_keep = len(poisoned_data)
+
+            self.performed_attacks+=1
+            attacked = 1
+            print('Stealthy closeness-based Label flipping attack launched by', self.peer_pseudonym, 'to flip class ', source_class,
             ' to class ', target_class, ', modifying ', num_elements_to_keep, ' data samples.')
         #End of Eduard's Code
         #***********************************************************************************************
@@ -261,8 +370,17 @@ class Peer():
         # print("Number of Attacks:{}".format(self.performed_attacks))
         # print('xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx')
         model = model.cpu()
+        #Eduard's Code
+        #***********************************************************************************************
+        #if the peer is an attacker we will scale the model b multiplying it by a scalar
+        # if self.peer_type == 'attacker' and (attack_type == 'entropy_label_flipping' or attack_type == 'closeness_label_flipping'):
+        #     update = scale_model(model.state_dict(), scale_factor = 1.1)
+        #     model.load_state_dict(update)
+        #End of Eduard's Code
+        #***********************************************************************************************
         return model.state_dict(), peer_grad , model, np.mean(epoch_loss), attacked, t
 #======================================= End of training function =============================================================#
+
 #========================================= End of Peer class ====================================================================
 
 
